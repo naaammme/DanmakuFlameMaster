@@ -884,7 +884,10 @@ public class DrawHandler extends Handler {
     }
 
     public void clearDanmakusOnScreen() {
-        obtainMessage(CLEAR_DANMAKUS_ON_SCREEN).sendToTarget();
+        if (drawTask != null) {
+            removeMessages(CLEAR_DANMAKUS_ON_SCREEN);
+            drawTask.clearDanmakusOnScreen(getCurrentTime());
+        }
     }
 
     public DanmakuContext getConfig() {

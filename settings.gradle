@@ -1,1 +1,18 @@
-include ':DanmakuFlameMaster', ':Sample', ':ndkbitmap-armv5', ':ndkbitmap-armv7a', ':ndkbitmap-x86'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'DanmakuFlameMaster'
+include ':DanmakuFlameMaster'

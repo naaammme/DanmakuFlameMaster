@@ -286,11 +286,13 @@ public class DrawTask implements IDrawTask {
     }
 
     @Override
-    public void clearDanmakusOnScreen(long currMillis) {
+    public synchronized void clearDanmakusOnScreen(long currMillis) {
         reset();
         mContext.mGlobalFlagValues.updateVisibleFlag();
         mContext.mGlobalFlagValues.updateFirstShownFlag();
         mStartRenderTime = currMillis;
+        mLastBeginMills = mLastEndMills = 0;
+        mRunningDanmakus = new Danmakus(Danmakus.ST_BY_LIST);
     }
 
     @Override
