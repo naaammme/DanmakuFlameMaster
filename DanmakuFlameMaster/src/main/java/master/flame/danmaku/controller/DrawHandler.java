@@ -28,6 +28,7 @@ import android.view.Choreographer;
 
 import java.util.LinkedList;
 
+import master.flame.danmaku.api.PlayerDanmakuSync;
 import master.flame.danmaku.danmaku.model.AbsDanmakuSync;
 import master.flame.danmaku.danmaku.model.AbsDisplayer;
 import master.flame.danmaku.danmaku.model.BaseDanmaku;
@@ -505,6 +506,18 @@ public class DrawHandler extends Handler {
         mInSyncAction = true;
         long d = 0;
         long time = startMS - mTimeBase;
+        AbsDanmakuSync danmakuSync = mContext == null ? null : mContext.danmakuSync;
+        if (danmakuSync != null && danmakuSync.getSyncState() == AbsDanmakuSync.SYNC_STATE_PLAYING) {
+            long syncedTime = Math.max(0L, danmakuSync.getUptimeMillis());
+            d = timer.update(syncedTime);
+            mTimeBase = startMS - syncedTime;
+            mRemainingTime = 0;
+            if (mCallback != null) {
+                mCallback.updateTimer(timer);
+            }
+            mInSyncAction = false;
+            return d;
+        }
         if (mNonBlockModeEnable) {
             if (mCallback != null) {
                 mCallback.updateTimer(timer);
@@ -731,8 +744,13 @@ public class DrawHandler extends Handler {
                             if (isSyncPlayingState && quitFlag) {
                                 resume();
                             }
-                            drawTask.requestSync(fromTime, toTime, offset);
+                            if (danmakuSync instanceof PlayerDanmakuSync) {
+                                drawTask.seek(toTime);
+                            } else {
+                                drawTask.requestSync(fromTime, toTime, offset);
+                            }
                             timer.update(toTime);
+                            pausedPosition = toTime;
                             mTimeBase -= offset;
                             mRemainingTime = 0;
                         }
