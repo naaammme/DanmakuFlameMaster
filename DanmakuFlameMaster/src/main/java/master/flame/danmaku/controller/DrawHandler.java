@@ -347,7 +347,7 @@ public class DrawHandler extends Handler {
                 notifyRendering();
                 break;
             case UPDATE_WHEN_PAUSED:
-                if (quitFlag && mDanmakuView != null) {
+                if (quitFlag && mDanmakuView != null && drawTask != null && isPrepared()) {
                     drawTask.requestClear();
                     mDanmakuView.drawDanmakus();
                     notifyRendering();
@@ -361,6 +361,14 @@ public class DrawHandler extends Handler {
             case FORCE_RENDER:
                 if (drawTask != null) {
                     drawTask.requestRender();
+                }
+                if (quitFlag) {
+                    if (mDanmakusVisible && mDanmakuView != null && drawTask != null && isPrepared()) {
+                        removeMessages(UPDATE_WHEN_PAUSED);
+                        sendEmptyMessage(UPDATE_WHEN_PAUSED);
+                    }
+                } else {
+                    notifyRendering();
                 }
                 break;
         }

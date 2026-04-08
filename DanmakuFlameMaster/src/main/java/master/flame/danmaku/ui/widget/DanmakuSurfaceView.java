@@ -42,8 +42,6 @@ import master.flame.danmaku.danmaku.parser.BaseDanmakuParser;
 import master.flame.danmaku.danmaku.renderer.IRenderer.RenderingState;
 import master.flame.danmaku.danmaku.util.SystemClock;
 
-import static android.R.attr.x;
-
 public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDanmakuViewController, SurfaceHolder.Callback {
 
     public static final String TAG = "DanmakuSurfaceView";
@@ -55,24 +53,28 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     private HandlerThread mHandlerThread;
 
     private DrawHandler handler;
-    
+
     private boolean isSurfaceCreated;
 
     private boolean mEnableDanmakuDrwaingCache = true;
 
-	private OnDanmakuClickListener mOnDanmakuClickListener;
+    private OnDanmakuClickListener mOnDanmakuClickListener;
 
     private float mXOff;
 
     private float mYOff;
 
     private DanmakuTouchHelper mTouchHelper;
-    
+
     private boolean mShowFps;
 
     private boolean mDanmakuVisible = true;
 
     protected int mDrawingThreadType = THREAD_TYPE_NORMAL_PRIORITY;
+
+    private final Object mCanvasLock = new Object();
+
+    private boolean mResumePendingAfterSurfaceRecreated;
 
     public DanmakuSurfaceView(Context context) {
         super(context);
@@ -88,7 +90,7 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
         mSurfaceHolder.addCallback(this);
         mSurfaceHolder.setFormat(PixelFormat.TRANSPARENT);
         DrawHelper.useDrawColorToClearCanvas(true, true);
-		mTouchHelper = DanmakuTouchHelper.instance(this);
+        mTouchHelper = DanmakuTouchHelper.instance(this);
     }
 
     public DanmakuSurfaceView(Context context, AttributeSet attrs) {
@@ -120,7 +122,7 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
             handler.removeAllDanmakus(isClearDanmakusOnScreen);
         }
     }
-    
+
     @Override
     public void removeAllLiveDanmakus() {
         if (handler != null) {
@@ -147,10 +149,11 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     @Override
     public void surfaceCreated(SurfaceHolder surfaceHolder) {
         isSurfaceCreated = true;
-        Canvas canvas = surfaceHolder.lockCanvas();
-        if (canvas != null) {
-            DrawHelper.clearCanvas(canvas);
-            surfaceHolder.unlockCanvasAndPost(canvas);
+        clear();
+        DrawHandler drawHandler = handler;
+        if (mResumePendingAfterSurfaceRecreated && drawHandler != null && drawHandler.isPrepared() && mDanmakuVisible) {
+            mResumePendingAfterSurfaceRecreated = false;
+            drawHandler.resume();
         }
     }
 
@@ -163,13 +166,21 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     @Override
     public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
+        DrawHandler drawHandler = handler;
+        boolean wasRendering = drawHandler != null && drawHandler.isPrepared() && !drawHandler.isStop();
         isSurfaceCreated = false;
+        mResumePendingAfterSurfaceRecreated = wasRendering;
+        if (wasRendering) {
+            drawHandler.pause();
+        }
     }
 
     @Override
     public void release() {
         stop();
-        if(mDrawTimes!= null) mDrawTimes.clear();
+        if (mDrawTimes != null) {
+            mDrawTimes.clear();
+        }
     }
 
     @Override
@@ -178,6 +189,7 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     }
 
     private synchronized void stopDraw() {
+        mResumePendingAfterSurfaceRecreated = false;
         if (handler != null) {
             handler.quit();
             handler = null;
@@ -193,13 +205,13 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
             handlerThread.quit();
         }
     }
-    
-    protected synchronized Looper getLooper(int type){
+
+    protected synchronized Looper getLooper(int type) {
         if (mHandlerThread != null) {
             mHandlerThread.quit();
             mHandlerThread = null;
         }
-        
+
         int priority;
         switch (type) {
             case THREAD_TYPE_MAIN_THREAD:
@@ -215,20 +227,21 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
                 priority = android.os.Process.THREAD_PRIORITY_DEFAULT;
                 break;
         }
-        String threadName = "DFM Handler Thread #"+priority;
+        String threadName = "DFM Handler Thread #" + priority;
         mHandlerThread = new HandlerThread(threadName, priority);
         mHandlerThread.start();
         return mHandlerThread.getLooper();
     }
 
     private void prepare() {
-        if (handler == null)
+        if (handler == null) {
             handler = new DrawHandler(getLooper(mDrawingThreadType), this, mDanmakuVisible);
+        }
     }
 
     @Override
     public void prepare(BaseDanmakuParser parser, DanmakuContext config) {
-    	prepare();
+        prepare();
         handler.setConfig(config);
         handler.setParser(parser);
         handler.setCallback(mCallback);
@@ -249,12 +262,14 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     }
 
     @Override
-    public void showFPS(boolean show){
+    public void showFPS(boolean show) {
         mShowFps = show;
     }
+
     private static final int MAX_RECORD_SIZE = 50;
     private static final int ONE_SECOND = 1000;
     private LinkedList<Long> mDrawTimes;
+
     private float fps() {
         long lastTime = SystemClock.uptimeMillis();
         mDrawTimes.addLast(lastTime);
@@ -269,64 +284,78 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
         }
         return dtime > 0 ? mDrawTimes.size() * ONE_SECOND / dtime : 0.0f;
     }
+
     @Override
     public long drawDanmakus() {
-        if (!isSurfaceCreated)
+        if (!isViewReady()) {
             return 0;
-        if (!isShown())
+        }
+        if (!isShown()) {
             return -1;
+        }
         long stime = SystemClock.uptimeMillis();
-        long dtime = 0;
-        Canvas canvas = mSurfaceHolder.lockCanvas();
-        if (canvas != null){
-            if (handler != null) {
-                RenderingState rs = handler.draw(canvas);
-                if (mShowFps) {
-                    if (mDrawTimes == null)
-                        mDrawTimes = new LinkedList<Long>();
-                    dtime = SystemClock.uptimeMillis() - stime;
-                    String fps = String.format(Locale.getDefault(),
-                            "fps %.2f,time:%d s,cache:%d,miss:%d", fps(), getCurrentTime() / 1000,
-                            rs.cacheHitCount, rs.cacheMissCount);
-                    DrawHelper.drawFPS(canvas, fps);
+        synchronized (mCanvasLock) {
+            Canvas canvas = lockCanvasCompat();
+            if (canvas != null) {
+                try {
+                    DrawHandler drawHandler = handler;
+                    if (drawHandler != null) {
+                        RenderingState rs = drawHandler.draw(canvas);
+                        if (mShowFps) {
+                            if (mDrawTimes == null) {
+                                mDrawTimes = new LinkedList<Long>();
+                            }
+                            String fps = String.format(Locale.getDefault(),
+                                    "fps %.2f,time:%d s,cache:%d,miss:%d", fps(), getCurrentTime() / 1000,
+                                    rs.cacheHitCount, rs.cacheMissCount);
+                            DrawHelper.drawFPS(canvas, fps);
+                        }
+                    }
+                } finally {
+                    unlockCanvasAndPostCompat(canvas);
                 }
             }
-            if (isSurfaceCreated)
-                mSurfaceHolder.unlockCanvasAndPost(canvas);
         }
-        dtime = SystemClock.uptimeMillis() - stime;
-        return dtime;
+        return SystemClock.uptimeMillis() - stime;
     }
 
     public void toggle() {
         if (isSurfaceCreated) {
-            if (handler == null)
+            if (handler == null) {
                 start();
-            else if (handler.isStop()) {
+            } else if (handler.isStop()) {
                 resume();
-            } else
+            } else {
                 pause();
+            }
         }
     }
 
     @Override
     public void pause() {
-        if (handler != null)
+        mResumePendingAfterSurfaceRecreated = false;
+        if (handler != null) {
             handler.pause();
+        }
     }
 
     @Override
     public void resume() {
-        if (handler != null && handler.isPrepared())
-            handler.resume();
-        else if (handler == null) {
+        if (handler != null && handler.isPrepared()) {
+            if (isViewReady()) {
+                mResumePendingAfterSurfaceRecreated = false;
+                handler.resume();
+            } else {
+                mResumePendingAfterSurfaceRecreated = true;
+            }
+        } else if (handler == null) {
             restart();
         }
     }
-    
+
     @Override
     public boolean isPaused() {
-        if(handler != null) {
+        if (handler != null) {
             return handler.isStop();
         }
         return false;
@@ -346,13 +375,13 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     public void start(long postion) {
         if (handler == null) {
             prepare();
-        }else{
+        } else {
             handler.removeCallbacksAndMessages(null);
         }
         handler.obtainMessage(DrawHandler.START, postion).sendToTarget();
     }
 
-	@Override
+    @Override
     public boolean onTouchEvent(MotionEvent event) {
         boolean isEventConsumed = mTouchHelper.onTouchEvent(event);
         if (!isEventConsumed) {
@@ -362,7 +391,7 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     }
 
     public void seekTo(Long ms) {
-        if(handler != null){
+        if (handler != null) {
             handler.seekTo(ms);
         }
     }
@@ -378,7 +407,7 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     @Override
     public boolean isViewReady() {
-        return isSurfaceCreated;
+        return isSurfaceCreated && mSurfaceHolder != null && mSurfaceHolder.getSurface().isValid();
     }
 
     @Override
@@ -395,12 +424,12 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     public View getView() {
         return this;
     }
-      
+
     @Override
     public void show() {
         showAndResumeDrawTask(null);
     }
-    
+
     @Override
     public void showAndResumeDrawTask(Long position) {
         mDanmakuVisible = true;
@@ -418,10 +447,11 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
         }
         handler.hideDanmakus(false);
     }
-    
+
     @Override
     public long hideAndPauseDrawTask() {
         mDanmakuVisible = false;
+        mResumePendingAfterSurfaceRecreated = false;
         if (handler == null) {
             return 0;
         }
@@ -457,7 +487,10 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     @Override
     public void forceRender() {
-
+        DrawHandler drawHandler = handler;
+        if (drawHandler != null) {
+            drawHandler.forceRender();
+        }
     }
 
     @Override
@@ -465,10 +498,15 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
         if (!isViewReady()) {
             return;
         }
-        Canvas canvas = mSurfaceHolder.lockCanvas();
-        if (canvas != null) {
-            DrawHelper.clearCanvas(canvas);
-            mSurfaceHolder.unlockCanvasAndPost(canvas);
+        synchronized (mCanvasLock) {
+            Canvas canvas = lockCanvasCompat();
+            if (canvas != null) {
+                try {
+                    DrawHelper.clearCanvas(canvas);
+                } finally {
+                    unlockCanvasAndPostCompat(canvas);
+                }
+            }
         }
     }
 
@@ -479,7 +517,7 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     @Override
     public void setDrawingThreadType(int type) {
-        mDrawingThreadType  = type;
+        mDrawingThreadType = type;
     }
 
     @Override
@@ -499,6 +537,30 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     public void clearDanmakusOnScreen() {
         if (handler != null) {
             handler.clearDanmakusOnScreen();
+        }
+    }
+
+    private Canvas lockCanvasCompat() {
+        if (!isViewReady()) {
+            return null;
+        }
+        try {
+            return mSurfaceHolder.lockCanvas();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private void unlockCanvasAndPostCompat(Canvas canvas) {
+        if (canvas == null) {
+            return;
+        }
+        try {
+            if (isSurfaceCreated) {
+                mSurfaceHolder.unlockCanvasAndPost(canvas);
+            }
+        } catch (RuntimeException e) {
+            // Surface was lost after lockCanvas(); skip posting this frame.
         }
     }
 

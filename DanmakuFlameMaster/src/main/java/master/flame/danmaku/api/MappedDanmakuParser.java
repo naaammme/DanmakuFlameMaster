@@ -36,6 +36,8 @@ public class MappedDanmakuParser<T> extends BaseDanmakuParser {
             if (danmaku == null) {
                 continue;
             }
+            danmaku.flags = danmakuContext.mGlobalFlagValues;
+            danmaku.setTimer(mTimer);
             danmakus.addItem(danmaku);
             if (mListener != null) {
                 mListener.onDanmakuAdd(danmaku);
