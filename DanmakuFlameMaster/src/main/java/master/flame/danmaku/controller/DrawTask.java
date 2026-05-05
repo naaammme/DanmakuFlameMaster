@@ -125,7 +125,7 @@ public class DrawTask implements IDrawTask {
         }
         item.index = danmakuList.size();
         boolean subAdded = true;
-        if (mLastBeginMills <= item.getActualTime() && item.getActualTime() <= mLastEndMills) {
+        if (mLastBeginMills <= item.getTime() && item.getTime() < mLastEndMills) {
             synchronized (danmakus) {
                 subAdded = danmakus.addItem(item);
             }

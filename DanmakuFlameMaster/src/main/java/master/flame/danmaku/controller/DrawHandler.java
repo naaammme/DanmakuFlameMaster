@@ -669,6 +669,7 @@ public class DrawHandler extends Handler {
             item.flags = mContext.mGlobalFlagValues;
             item.setTimer(timer);
             drawTask.addDanmaku(item);
+            removeMessages(NOTIFY_RENDERING);
             obtainMessage(NOTIFY_RENDERING).sendToTarget();
         }
     }
