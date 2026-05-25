@@ -76,6 +76,12 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     private boolean mResumePendingAfterSurfaceRecreated;
 
+    private boolean mPreparePending;
+
+    private BaseDanmakuParser mPendingParser;
+
+    private DanmakuContext mPendingConfig;
+
     public DanmakuSurfaceView(Context context) {
         super(context);
         init();
@@ -150,6 +156,16 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
     public void surfaceCreated(SurfaceHolder surfaceHolder) {
         isSurfaceCreated = true;
         clear();
+        if (mPreparePending) {
+            BaseDanmakuParser parser = mPendingParser;
+            DanmakuContext config = mPendingConfig;
+            mPreparePending = false;
+            mPendingParser = null;
+            mPendingConfig = null;
+            if (parser != null && config != null) {
+                prepare(parser, config);
+            }
+        }
         DrawHandler drawHandler = handler;
         if (mResumePendingAfterSurfaceRecreated && drawHandler != null && drawHandler.isPrepared() && mDanmakuVisible) {
             mResumePendingAfterSurfaceRecreated = false;
@@ -190,6 +206,12 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     private synchronized void stopDraw() {
         mResumePendingAfterSurfaceRecreated = false;
+        if (mPendingParser != null) {
+            mPendingParser.release();
+        }
+        mPreparePending = false;
+        mPendingParser = null;
+        mPendingConfig = null;
         if (handler != null) {
             handler.quit();
             handler = null;
@@ -197,12 +219,13 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
         HandlerThread handlerThread = this.mHandlerThread;
         mHandlerThread = null;
         if (handlerThread != null) {
+            handlerThread.quit();
             try {
-                handlerThread.join();
+                handlerThread.join(2000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
+                Thread.currentThread().interrupt();
             }
-            handlerThread.quit();
         }
     }
 
@@ -241,6 +264,15 @@ public class DanmakuSurfaceView extends SurfaceView implements IDanmakuView, IDa
 
     @Override
     public void prepare(BaseDanmakuParser parser, DanmakuContext config) {
+        if (!isViewReady()) {
+            mPreparePending = true;
+            mPendingParser = parser;
+            mPendingConfig = config;
+            return;
+        }
+        mPreparePending = false;
+        mPendingParser = null;
+        mPendingConfig = null;
         prepare();
         handler.setConfig(config);
         handler.setParser(parser);
