@@ -23,11 +23,17 @@ public class SegmentDanmakuSession<T> {
     private final DrawHandler.Callback internalCallback = new DrawHandler.Callback() {
         @Override
         public void prepared() {
+            boolean shouldReload;
             synchronized (SegmentDanmakuSession.this) {
                 preparing = false;
                 prepared = true;
+                shouldReload = reloadOnPrepared;
+                reloadOnPrepared = false;
             }
             danmakuView.start(resolveStartPositionMs());
+            if (shouldReload) {
+                reloadActiveDanmakus();
+            }
             if (externalCallback != null) {
                 externalCallback.prepared();
             }
@@ -59,6 +65,7 @@ public class SegmentDanmakuSession<T> {
     private PlayerTimeProvider playerTimeProvider;
     private boolean prepared;
     private boolean preparing;
+    private boolean reloadOnPrepared;
     private boolean hasPendingSeekPosition;
     private long pendingSeekPositionMs;
 
@@ -107,6 +114,7 @@ public class SegmentDanmakuSession<T> {
             return;
         }
         preparing = true;
+        reloadOnPrepared = false;
         danmakuView.setCallback(internalCallback);
         danmakuView.prepare(new MappedDanmakuParser<T>(flattenItems(), itemMapper), danmakuContext);
     }
@@ -118,6 +126,9 @@ public class SegmentDanmakuSession<T> {
         boolean existed = segmentStore.containsKey(segmentData.getSegmentIndex());
         segmentStore.put(segmentData.getSegmentIndex(), copySegment(segmentData));
         if (!prepared) {
+            if (preparing) {
+                reloadOnPrepared = true;
+            }
             return;
         }
         if (existed) {
@@ -138,14 +149,21 @@ public class SegmentDanmakuSession<T> {
                 segmentStore.put(segment.getSegmentIndex(), copySegment(segment));
             }
         }
-        if (prepared) {
-            reloadActiveDanmakus();
+        if (!prepared) {
+            if (preparing) {
+                reloadOnPrepared = true;
+            }
+            return;
         }
+        reloadActiveDanmakus();
     }
 
     public synchronized void clearSegments() {
         segmentStore.clear();
         if (!prepared) {
+            if (preparing) {
+                reloadOnPrepared = true;
+            }
             return;
         }
         danmakuView.removeAllDanmakus(true);
@@ -186,6 +204,7 @@ public class SegmentDanmakuSession<T> {
     public synchronized void release() {
         prepared = false;
         preparing = false;
+        reloadOnPrepared = false;
         danmakuView.release();
     }
 
